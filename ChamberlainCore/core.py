@@ -44,6 +44,20 @@ class Core():
         self.devices = {}
 
         self.current_mode = "away"
+
+        now = datetime.now()
+        hour = now.hour
+        minute = now.minute
+        year = now.year
+        month = now.month
+        day = now.day
+        self.pass_op = {}
+        self.pass_op["year"] = year
+        self.pass_op["month"] = month
+        self.pass_op["day"] = day
+        self.pass_op["hour"] = hour
+        self.pass_op["minute"] = minute
+        self.pass_op["mode"] = self.current_mode
         #self.device = Device(device_name="light",mode_coder=self.mode_coder)
 
         pass
@@ -102,12 +116,21 @@ class Core():
                 message["data_value"] = json_data["data_value"]
             message_json = json.dumps(message)
             self.client.publish(self.pub_topic_to_device,message_json)
+            
+            # 更新属性状态
+            for device in self.devices.values():
+                if device.get_device_name() == message["device_name"]:
+                    device.properties[message["data_name"]] = message["data_value"]
+                    pass
 
+            # 实现设备根据用户和当前场景进行学习
             for device in self.devices.values():
                 train_json = {}
                 train_json["year"] = json_data["year"]
                 train_json["month"] = json_data["month"]
                 train_json["day"] = json_data["day"]
+                train_json["hour"] = json_data["hour"]
+                train_json["minute"] = json_data["minute"]
                 train_json["mode"] = self.current_mode
                 train_json["data_name"] = json_data["data_name"]
                 train_json["data_type"] = json_data["data_type"]
@@ -117,7 +140,7 @@ class Core():
         elif json_data["code"] == "change_scene":
             # 首先更改模式
             
-            if self.change_mode(year=json_data["year"],month=json_data["month"],day=json_data["day"],mode=json_data["mode"]) == False:
+            if self.change_mode(json_data=json_data) == False:
                 # 更换模式失败，当前模式就是这个模式
                 return
             # 更换模式成功
@@ -131,7 +154,9 @@ class Core():
             data["mode"] = json_data["mode"]
             dt.write_json_to_file(filename="test_mode.csv",json_data=data)
             # 预测这个场景下各设备的可能状态，并操作
-
+            self.scene_mode.train_self(x_json=self.pass_op,y_json=data)
+            # 学习完以后更新
+            self.pass_op = data
             # 预测下一个可能的模式(模式必须得经过训练才可以进行下面操作)
             input = self.scene_mode.json_to_input(json_data=json_data)
             output = self.scene_mode.compute(inputs=input)
@@ -160,7 +185,15 @@ class Core():
 
                 
                 if time_hour == hour and time_minute == minute:
-                    if not self.change_mode(year=year,month=month,day=day,mode=next_mode):
+                    data = {
+                        "year":year,
+                        "month":month,
+                        "day":day,
+                        "hour":hour,
+                        "minute":minute,
+                        "mode":next_mode
+                    }
+                    if not self.change_mode(data):
                         # 当前预测状态没有任何改变
                         continue
                     pass
@@ -177,7 +210,14 @@ class Core():
         print("添加新设备:",device_name,",属性:",properties)
         pass
 
-    def change_mode(self,year,month,day,mode):
+    def change_mode(self,json_data):
+        year = json_data["year"]
+        month = json_data["month"]
+        day = json_data["day"]
+        hour = json_data["hour"]
+        minute = json_data["minute"]
+        mode = json_data["mode"]
+
         print("current mode:",self.current_mode,",next mode:",mode)
         if mode == self.current_mode:
             return False
@@ -187,6 +227,8 @@ class Core():
             "year":year
             ,"month":month
             ,"day":day
+            ,"hour":hour
+            ,"minute":minute
             ,"mode":mode
         }
         for device in self.devices.values():
@@ -198,6 +240,7 @@ class Core():
                 print("下位机预测结果:",output)
                 message = json.dumps(output)
                 self.client.publish(self.pub_topic_to_device,message)
+                # 同时要把结果传给上位机，有上位机做判断
 
         return True
         pass

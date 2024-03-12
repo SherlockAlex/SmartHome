@@ -40,6 +40,17 @@ class SceneMode():
         return outputs
         pass
 
+    def train_self(self,x_json,y_json):
+        # 理论上，应该是用户操作四次后进行学习
+        # 前三次作为输入，进行加权求和，记录越靠后的，权值越大
+
+        # 但是这里我们让
+        x = self.json_to_input(x_json)
+        y = self.json_to_input(y_json)
+        self.net.train(x,y,1,32,(x,y))
+        self.save()
+        pass
+
     def train(self):
         self.csv_data.load_file()
         x_data,y_data = self.csv_data.create_train_sequence()

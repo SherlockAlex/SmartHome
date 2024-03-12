@@ -5,6 +5,7 @@ import numpy as np
 class Device():
     def __init__(self,device_name,device_properties,mode_coder):
         self.__device_name = device_name
+        self.properties = {}
         self.__device_properties = device_properties
 
         self.__train_data_file = "data_"+self.__device_name+".csv"
@@ -13,7 +14,7 @@ class Device():
 
         select_columns=["year","month","day","mode","data_name","data_type","data_value"]
         #feature_columns=["date_vx","date_vy","mode_vx","mode_vy","mode_vz"]
-        feature_columns=["info_vx","info_vy","date_vx","date_vy","mode_vx","mode_vy","mode_vz","mode_vw","mode_va","mode_vb","mode_vc","mode_vd"]
+        feature_columns=["info_vx","info_vy","date_vx","date_vy","time_vx","time_vy","mode_vx","mode_vy","mode_vz","mode_vw","mode_va","mode_vb","mode_vc","mode_vd"]
         label_columns=["value_vx","value_vy"]
         self.__csv_data = dt.CSVData(
             filename=self.__train_data_file
@@ -58,6 +59,7 @@ class Device():
         # 模型自己训练
         data_info_vec = self.__data_coder.fit_transform(json_data["data_name"],json_data["data_type"])
         date_vec = dt.date_to_vector(json_data["year"],json_data["month"],json_data["day"])
+        time_vec = dt.time_to_vector(json_data["hour"],json_data["minute"])
         mode_vec = self.mode_coder.one_hot_transform(json_data["mode"])
         data_value_vec = self.__data_coder.transform(json_data["data_type"],json_data["data_value"])
 
@@ -66,11 +68,13 @@ class Device():
             x_train.append(i)
         for i in date_vec:
             x_train.append(i)
+        for i in time_vec:
+            x_train.append(i)
         for i in mode_vec:
             x_train.append(i)
         x = np.array([x_train])
         y = np.array([data_value_vec])
-        self.__brain.train(x,y,1,1,(x,y))
+        self.__brain.train(x,y,3,1,(x,y))
         self.__brain.save(self.__device_name)
         pass
 
@@ -92,12 +96,17 @@ class Device():
         year = json_data["year"]
         month = json_data["month"]
         day = json_data["day"]
+        hour = json_data["hour"]
+        minute = json_data["minute"]
         mode = json_data["mode"]
         
         date_vec = dt.date_to_vector(year=year,month=month,day=day)
+        time_vec = dt.time_to_vector(hour=hour,minute=minute)
         mode_vec = self.mode_coder.one_hot_transform(mode=mode)
         vector = []
         for i in date_vec:
+            vector.append(i)
+        for i in time_vec:
             vector.append(i)
         for i in mode_vec:
             vector.append(i)
@@ -119,11 +128,6 @@ class Device():
         pass
 
     def compute(self,inputs):
-
-        # 首先计算设备的switch
-
-        switch_state_out = self.compute_attribute_state(inputs=inputs,data_name="switch",data_type="bool")
-        switch_state = self.__data_coder.inverse_transfrom("bool",switch_state_out)
         
         outputs = []
         for data_name,data_type in self.__device_properties.items():
