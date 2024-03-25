@@ -50,6 +50,35 @@ def date_to_vector(year,month,day):
 
     pass
 
+def vector_to_date(year, vector):
+    # 计算当前天在一年中的弧度
+    # 这个是
+    radian = math.atan2(vector[1], vector[0])+math.pi
+    
+    # 计算当前天对应的月份和日
+    day_count = {
+        0:31, 1:28, 2:31, 3:30, 4:31, 5:30, 6:31, 7:31, 8:30, 9:31, 10:30, 11:31
+    }
+
+    # 计算当前天是一年中的第几天
+    total_day = 365  # 假设一年有365天
+    if year%400==0:
+        total_day = 366
+        day_count[1]=29
+    current_day = (radian * total_day) / (2 * math.pi)
+    
+    month = 0
+    day = 0
+    for i in range(12):
+        if current_day <= day_count[i]:
+            month = i + 1
+            day = int(current_day)
+            break
+        current_day -= day_count[i]
+    
+    return (month, day)
+
+
 def time_to_vector(hour,minute):
     _total_minute = 24*60
     _current_minute = hour*60 + minute
@@ -126,6 +155,18 @@ def slice_train_test_data(x_data,y_data,slice_rate):
 
     return x_train,y_train,x_test,y_test
 
+def slice_dual_train_test_data(x_data,y_data,z_data,slice_rate):
+    train_size = int(len(x_data)*slice_rate)
+    x_train = x_data[:train_size]
+    y_train = y_data[:train_size]
+    z_train = z_data[:train_size]
+
+    x_test = x_data[train_size:]
+    y_test = y_data[train_size:]
+    z_test = z_data[train_size:]
+
+    return x_train,y_train,z_train,x_test,y_test,z_test
+
 def slice_msk_data(x_data,y_data,slice_rate):
     index = [i for i in range(len(x_data))]
     np.random.shuffle(index)
@@ -172,6 +213,25 @@ def slide_sequence(step,dataset):
         x_data = np.array(x_data)
         y_data = np.array(y_data)
         return x_data,y_data
+        pass
+
+def slide_dual_sequence(step,dataset):
+        # 现在未来过去
+        x_data,y_data,z_data = [],[],[]
+        length = len(dataset)
+        for i in range(step,length - step):
+            x_temp = dataset[i:(i+step),:]
+            y_temp = dataset[(i+step),:]
+            z_temp = dataset[(i-step):i,:]
+
+            x_data.append(x_temp)
+            y_data.append(y_temp)
+            z_data.append(z_temp)
+
+        x_data = np.array(x_data)
+        y_data = np.array(y_data)
+        z_data = np.array(z_data)
+        return x_data,y_data,z_data
         pass
 
 def fixed_hash(s):
@@ -270,6 +330,55 @@ class CSVSequnceData():
         return dataset.reshape(-1,1,dataset.shape[1])
     pass
 
+#序列化数据(将信息分为过去，现在，未来)
+class CSVDualData():
+    def __init__(self,filename,columns,step):
+        self.filename = filename
+        self.step=step      #采用步长
+        self.columns=columns
+        pass
+    
+    def load_file(self):
+        self.df = pd.read_csv(self.filename)
+        self.df=self.df[self.columns]
+        pass
+
+    def create_dataframe(self,value):
+        df = pd.DataFrame(value,columns = self.columns)
+        return df
+        pass
+
+    def set_preprocess_callback(self,callback):
+        self.preprocess_callback = callback
+        pass
+
+    def set_encode_callback(self,callback):
+        self.encode_callback = callback
+        pass
+
+    def _preprocess(self,df):
+        df = self.preprocess_callback(df)
+        #scale = preprocessing.MinMaxScaler(feature_range=features_range)
+        dataset = df.values
+        #dataset = scale.fit_transform(dataset)
+        return dataset
+        pass
+
+    def preprocess(self):
+        return self._preprocess(self.df)
+
+    def create_train_sequence(self):
+        dataset = self._preprocess(self.df)
+        dataset = self.encode_callback(dataset)
+        # 返回 现在，未来，过去
+        return slide_dual_sequence(step=self.step,dataset=dataset)
+
+    def create_sequence(self,df):
+        dataset = self._preprocess(df=df)
+        dataset = self.encode_callback(dataset)
+        return dataset.reshape(-1,1,dataset.shape[1])
+    pass
+
 class DeviceCoder():
     def __init__(self):
         self._embedding = {}
@@ -330,6 +439,9 @@ class DataCoder():
     def __init__(self):
         self._embedding = {}
         pass
+
+    def transform_data_type():
+        return
 
     def fit_transform(self,data_name,data_type):
         name_code = fixed_hash(data_name)
@@ -418,16 +530,17 @@ class ModeCoder():
         pass
 
     def fit_transform(self,mode):
-        radian = fixed_hash(mode)
-        x1 = math.cos(radian)
-        x2 = math.sin(radian)
-        index = self._mode_map[mode]
-        x3 = -1
-        if index%2==0:
-            x3 = math.cos(index)
-        else:
-            x3 = math.sin(index)
-        vector = np.array([x1,x2,x3])
+        k = self._mode_map[mode]
+        n = 10000
+        r1 = k/(n**((2*0)/8))
+        r2 = k/(n**((2*1)/8))
+        r3 = k/(n**((2*2)/8))
+        r4 = k/(n**((2*3)/8))
+        x1 = math.sin(r1)
+        x2 = math.cos(r2)
+        x3 = math.sin(r3)
+        x4 = math.cos(r4)
+        vector = np.array([x1,x2,x3,x4])
         self._embedding[mode] = vector
         return vector
         pass

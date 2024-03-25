@@ -2,19 +2,25 @@ from brain import Brain
 import datatool as dt
 import numpy as np
 
+# 让设备自己学习再什么时间段做什么事，然后控制时间肯定不是每时每刻都在预测
+
 class Device():
     def __init__(self,device_name,device_properties,mode_coder):
         self.__device_name = device_name
         self.properties = {}
         self.__device_properties = device_properties
+        self.state = {}
 
         self.__train_data_file = "data_"+self.__device_name+".csv"
         self.__data_coder = dt.DataCoder()
         self.mode_coder = mode_coder
 
-        select_columns=["year","month","day","mode","data_name","data_type","data_value"]
-        #feature_columns=["date_vx","date_vy","mode_vx","mode_vy","mode_vz"]
-        feature_columns=["info_vx","info_vy","date_vx","date_vy","time_vx","time_vy","mode_vx","mode_vy","mode_vz","mode_vw","mode_va","mode_vb","mode_vc","mode_vd"]
+        self.x_self_train_list = []
+        self.y_self_train_list = []
+
+        
+        select_columns=["mode","data_name","data_type","data_value"]
+        feature_columns=["info_vx","info_vy","mode_vx","mode_vy","mode_vz","mode_vw","mode_va","mode_vb","mode_vc","mode_vd"]
         label_columns=["value_vx","value_vy"]
         self.__csv_data = dt.CSVData(
             filename=self.__train_data_file
@@ -26,10 +32,18 @@ class Device():
         
         features_len = len(feature_columns)
         output_len = len(label_columns)
-        self.__brain = Brain(input_dim=(features_len,),output_dim=output_len)
+        self.__brain = Brain(
+            input_dim=(features_len,)
+            ,first_output_dim=features_len
+            ,output_dim=output_len
+        )
 
         for data_name,data_type in self.__device_properties.items():
             self.__data_coder.fit_transform(data_name=data_name,data_type=data_type)
+            if data_type == "bool":
+                self.state[data_name] = False
+            elif data_type == "float":
+                self.state[data_name] = 0.0
 
         try:
             self.load()
@@ -54,26 +68,36 @@ class Device():
         self.__brain.save(self.__device_name)
 
         pass
-
-    def train_self(self,json_data):
-        # 模型自己训练
+    
+    def append_train_data(self,json_data):
         data_info_vec = self.__data_coder.fit_transform(json_data["data_name"],json_data["data_type"])
-        date_vec = dt.date_to_vector(json_data["year"],json_data["month"],json_data["day"])
-        time_vec = dt.time_to_vector(json_data["hour"],json_data["minute"])
-        mode_vec = self.mode_coder.one_hot_transform(json_data["mode"])
         data_value_vec = self.__data_coder.transform(json_data["data_type"],json_data["data_value"])
+        mode_vec = self.mode_coder.one_hot_transform(json_data["mode"])
 
         x_train = []
         for i in data_info_vec:
             x_train.append(i)
-        for i in date_vec:
-            x_train.append(i)
-        for i in time_vec:
-            x_train.append(i)
         for i in mode_vec:
             x_train.append(i)
-        x = np.array([x_train])
-        y = np.array([data_value_vec])
+        
+        self.x_self_train_list.append(x_train)
+        self.y_self_train_list.append(data_value_vec)
+
+        pass
+
+    def train_self(self):
+        # 自学习
+        
+        if len(self.x_self_train_list)<=0 or len(self.y_self_train_list)<=0:
+            self.x_self_train_list.clear()
+            self.y_self_train_list.clear()
+            return
+
+        x = np.array(self.x_self_train_list)
+        y = np.array(self.y_self_train_list)
+        self.x_self_train_list.clear()
+        self.y_self_train_list.clear()
+
         self.__brain.train(x,y,3,1,(x,y))
         self.__brain.save(self.__device_name)
         pass
@@ -93,21 +117,10 @@ class Device():
         pass
 
     def json_to_input(self,json_data):
-        year = json_data["year"]
-        month = json_data["month"]
-        day = json_data["day"]
-        hour = json_data["hour"]
-        minute = json_data["minute"]
         mode = json_data["mode"]
         
-        date_vec = dt.date_to_vector(year=year,month=month,day=day)
-        time_vec = dt.time_to_vector(hour=hour,minute=minute)
-        mode_vec = self.mode_coder.one_hot_transform(mode=mode)
+        mode_vec = self.mode_coder.one_hot_transform(json_data["mode"])
         vector = []
-        for i in date_vec:
-            vector.append(i)
-        for i in time_vec:
-            vector.append(i)
         for i in mode_vec:
             vector.append(i)
         input = np.array([vector])
@@ -129,6 +142,8 @@ class Device():
 
     def compute(self,inputs):
         
+        # 计算当前模式下可能的概率
+
         outputs = []
         for data_name,data_type in self.__device_properties.items():
             state_out = self.compute_attribute_state(inputs=inputs,data_name=data_name,data_type=data_type)
@@ -147,13 +162,11 @@ class Device():
     def prepare(self,df):
         # 对df进行替换改造
         df["info_vx"],df["info_vy"] = zip(*df.apply(lambda row:self.__data_coder.fit_transform(row["data_name"],row["data_type"]),axis=1))
-        df["date_vx"],df["date_vy"] = zip(*df.apply(lambda row:dt.date_to_vector(year=row["year"],month=row["month"],day=row["day"]),axis=1))
-        #df["mode_vx"],df["mode_vy"],df["mode_vz"] = zip(*df.apply(lambda row:self.mode_coder.fit_transform(mode=row["mode"]),axis = 1))
-        df["mode_vx"],df["mode_vy"],df["mode_vz"],df["mode_vw"],df["mode_va"],df["mode_vb"],df["mode_vc"],df["mode_vd"]  = zip(*df.apply(lambda row:self.mode_coder.one_hot_transform(mode=row["mode"]),axis = 1))
+        
         df["value_vx"],df["value_vy"] = zip(*df.apply(lambda row:self.__data_coder.transform(row["data_type"],row["data_value"]),axis=1))
-
+        df["mode_vx"],df["mode_vy"],df["mode_vz"],df["mode_vw"],df["mode_va"],df["mode_vb"],df["mode_vc"],df["mode_vd"] = zip(*df.apply(lambda row:self.mode_coder.one_hot_transform(row["mode"]),axis = 1))
         # 对设备信息进行编码
-        df = df.drop(columns=["year","month","day","mode","data_name","data_type","data_value"],axis = 1)
+        df = df.drop(columns=["year","month","day","data_name","data_type","data_value"],axis = 1)
         print(df.head())
         return df
         pass

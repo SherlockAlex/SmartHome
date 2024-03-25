@@ -1,5 +1,18 @@
 import tensorflow as tf
 
+class FeedbackDense(tf.keras.layers.Layer):
+    def __init__(self, units, feedback_units, activation='relu', **kwargs):
+        super(FeedbackDense, self).__init__(**kwargs)
+        self.dense1 = tf.keras.layers.Dense(units=units, activation=activation)
+        self.dense2 = tf.keras.layers.Dense(units=feedback_units, activation=activation)
+
+    def call(self, inputs, feedback=None):
+        output1 = self.dense1(inputs)
+        if feedback is not None:
+            output1 += feedback
+        output2 = self.dense2(output1)
+        return output2, output1  # 返回当前层的输出和反馈给下一层的信息
+
 class SelfRecurrenceLayer(tf.keras.layers.Layer):
     def __init__(self,units,activation,name="self_recurrence",trainable=True,dtype=tf.float32):
         super(SelfRecurrenceLayer,self).__init__()
@@ -68,3 +81,4 @@ class AttentionLayer(tf.keras.layers.Layer):
         pass
 
     pass
+

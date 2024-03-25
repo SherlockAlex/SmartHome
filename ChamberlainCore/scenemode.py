@@ -1,31 +1,36 @@
-from brain import Brain
+from brain import DualBrain
+from brain import TimeTraveler
 import datatool as dt
 import numpy as np
+import tensorflow as tf
 
 class SceneMode():
     def __init__(self,mode_coder):
         columns = ["year","month","day","hour","minute","mode"]
-        self.csv_data = dt.CSVSequnceData("./data_mode.csv",columns=columns,step=1)
+        self.csv_data = dt.CSVDualData("./data_mode.csv",columns=columns,step=1)
         self.csv_data.set_encode_callback(self.csv_encode)
         self.csv_data.set_preprocess_callback(self.prepare)
         self.csv_data.load_file()
 
         self.mode_coder = mode_coder
 
-        self.net = Brain(
-            input_dim=10
-            ,output_dim=10
-        )
+        self.net = TimeTraveler((12,),12,12,12)
 
         pass
 
     def json_to_input(self,json_data):
+        year = json_data["year"]
+        month = json_data["month"]
+        day = json_data["day"]
         hour = json_data["hour"]
         minute = json_data["minute"]
         mode = json_data["mode"]
+        date_vec = dt.date_to_vector(year=year,month=month,day=day)
         time_vec = dt.time_to_vector(hour=hour,minute=minute)
         mode_vec = self.mode_coder.one_hot_transform(mode=mode)
         vector = []
+        for i in date_vec:
+            vector.append(i)
         for i in time_vec:
             vector.append(i)
         for i in mode_vec:
@@ -35,28 +40,30 @@ class SceneMode():
         pass
     
     def compute(self,inputs):
-        out_vecs = self.net.compute(inputs = inputs)
-        outputs = self.__decode(outputs=out_vecs)
-        return outputs
+        past_out,present_out,future_out = self.net.compute(inputs = inputs)
+        past = self.__decode(outputs=past_out)
+        present = self.__decode(outputs=present_out)
+        future = self.__decode(outputs=future_out)
+        return past,present,future
         pass
 
-    def train_self(self,x_json,y_json):
-        # 理论上，应该是用户操作四次后进行学习
-        # 前三次作为输入，进行加权求和，记录越靠后的，权值越大
+    def train_self(self,present_json,future_json,past_json):
 
-        # 但是这里我们让
-        x = self.json_to_input(x_json)
-        y = self.json_to_input(y_json)
-        self.net.train(x,y,1,32,(x,y))
+        present = self.json_to_input(present_json)
+        future = self.json_to_input(future_json)
+        past = self.json_to_input(past_json)
+
+        self.net.train(present_train=present,past_train=past,future_train=future,epochs=1,batch_size=1,validation_data=(present,[present,future,past]))
         self.save()
         pass
 
     def train(self):
         self.csv_data.load_file()
-        x_data,y_data = self.csv_data.create_train_sequence()
-        x_data = x_data.reshape((x_data.shape[0],x_data.shape[2]))
-        x_train,y_train,x_test,y_test = dt.slice_train_test_data(x_data=x_data,y_data=y_data,slice_rate=0.8)
-        self.net.train(x_train,y_train,15,32,(x_test,y_test))
+        present_data,future_data,past_data = self.csv_data.create_train_sequence()
+        present_data = present_data.reshape((present_data.shape[0],present_data.shape[2]))
+        past_data = past_data.reshape((past_data.shape[0],past_data.shape[2]))
+        present_train,futrue_train,past_train,present_test,future_test,past_test = dt.slice_dual_train_test_data(x_data=present_data,y_data=future_data,z_data=past_data,slice_rate=0.8)
+        self.net.train(present_train=present_train,past_train=past_train,future_train=futrue_train,epochs=30,batch_size=32,validation_data=(present_test,[present_test,future_test,past_test]))
         self.save()
         pass
 
@@ -90,9 +97,8 @@ class SceneMode():
 
     def prepare(self,df):
         # 对df进行替换改造
-        #df["date_vx"],df["date_vy"] = zip(*df.apply(lambda row:dt.date_to_vector(year=row["year"],month=row["month"],day=row["day"]),axis=1))
+        df["date_vx"],df["date_vy"] = zip(*df.apply(lambda row:dt.date_to_vector(year=row["year"],month=row["month"],day=row["day"]),axis=1))
         df["time_vx"],df["time_vy"] = zip(*df.apply(lambda row:dt.time_to_vector(hour=row["hour"],minute=row["minute"]),axis = 1))
-        #df["mode_vx"],df["mode_vy"],df["mode_vz"] = zip(*df.apply(lambda row:self.mode_coder.fit_transform(mode=row["mode"]),axis = 1))
         df["mode_vx"],df["mode_vy"],df["mode_vz"],df["mode_vw"],df["mode_va"],df["mode_vb"],df["mode_vc"],df["mode_vd"] = zip(*df.apply(lambda row:self.mode_coder.one_hot_transform(mode=row["mode"]),axis = 1))
         df = df.drop(columns=["year","month","day","hour","minute","mode"],axis = 1)
         return df
@@ -105,11 +111,18 @@ class SceneMode():
         # 编码器的功能
         results = []
         for output in outputs:
-            time_vec = output[0:2]
-            mode_vec = output[2:]
+            date_vec = output[0:2]
+            time_vec = output[2:4]
+            mode_vec = output[4:]
+            
+            next_date = dt.vector_to_date(2024,date_vec)
             next_time = dt.vector_to_time(time_vec)
             next_mode = self.mode_coder.get_mode(mode_vec)
+            
             json_dict = {}
+            json_dict["year"] = 2024
+            json_dict["month"] = next_date[0]
+            json_dict["day"] = next_date[1]
             json_dict["hour"] = next_time[0]
             json_dict["minute"] = next_time[1]
             json_dict["mode"] = next_mode
